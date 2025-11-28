@@ -1,5 +1,6 @@
 @description('Admin password for the Sophos Firewall')
 @minLength(12)
+@secure()
 param adminPassword string
 
 @description('Location for all resources')
