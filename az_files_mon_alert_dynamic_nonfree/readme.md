@@ -8,7 +8,7 @@ This Bicep Templates deploys an Azure automation account combined with a logic a
 ### Params:  
 
 - freeSpaceThresholdGB=<"<integer> - when free space smaller, send an alert"> - **defaults to 25GB if not defined**
-- alertEmailAddress="raptus@checkcentral.cc" - **set the customer checkcentral email address**
+- alertEmailAddress="donotreply@domain.tld" - **set the customer checkcentral email address**
 - scheduleStartTime="2025-12-03T18:00:00+01:00" - set according to you needs - **defaults to 2h in the future**
 
 ## Deploy
@@ -16,7 +16,7 @@ This Bicep Templates deploys an Azure automation account combined with a logic a
 ### 1. Deploy
 
 	az login
-	az deployment sub create --name "deploy-storage-monitor_dynamic_nonfree" --location switzerlandnorth --template-file main.bicep	--parameters alertEmailAddress="<raptus@checkcentral.cc>" [freeSpaceThresholdGB=50] [scheduleStartTime="2025-12-03T18:00:00+01:00"]
+	az deployment sub create --name "deploy-storage-monitor_dynamic_nonfree" --location switzerlandnorth --template-file main.bicep	--parameters alertEmailAddress="<donotreply@domain.tld>" [freeSpaceThresholdGB=50] [scheduleStartTime="2025-12-03T18:00:00+01:00"]
 
 ### 2. Authorize
 

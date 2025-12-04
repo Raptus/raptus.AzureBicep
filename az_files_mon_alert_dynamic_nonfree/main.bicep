@@ -10,7 +10,7 @@ param resourceGroupName string = 'RG-RCHKMONALERT'
 param freeSpaceThresholdGB int = 25
 
 @description('The email address to receive the alerts.')
-param alertEmailAddress string = 'raptus@checkcentral.cc'
+param alertEmailAddress string
 
 @description('Start time for the scheduler. Default is Now + 1 Hour.')
 param scheduleStartTime string = dateTimeAdd(utcNow(), 'PT2H')
