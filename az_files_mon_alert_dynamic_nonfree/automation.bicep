@@ -1,6 +1,7 @@
 param location string
 param logicAppUrl string
 param thresholdGB int
+param runbookSourceUrl string
 
 // Default: Current UTC time + 1 Hour (To ensure it is in the future)
 // If you want exact 18:00 alignment, override this parameter.
@@ -50,6 +51,11 @@ resource runbook 'Microsoft.Automation/automationAccounts/runbooks@2022-08-08' =
     logVerbose: false
     logProgress: false
     description: 'Checks Azure Files Quota vs Usage'
+    // This automates the publishing
+    publishContentLink: {
+      uri: runbookSourceUrl
+      version: '1.0.0.0'
+    }
   }
 }
 

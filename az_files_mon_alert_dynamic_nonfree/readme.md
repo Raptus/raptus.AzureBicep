@@ -24,7 +24,4 @@ This Bicep Templates deploys an Azure automation account combined with a logic a
 - Find the API Connection office365-connection (Status: Error)
 - Click Edit API connection -> Authorize -> Sign in -> Save
 
-### 3. Script
-
-- Go to the Automation Account aa-storage-monitor -> Runbooks
-- Click Check-Storage-Quota -> Edit
+### 3. Check the ressources for errors, run a test

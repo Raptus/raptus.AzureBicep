@@ -15,6 +15,9 @@ param alertEmailAddress string
 @description('Start time for the scheduler. Default is Now + 1 Hour.')
 param scheduleStartTime string = dateTimeAdd(utcNow(), 'PT2H')
 
+@description('The raw URL of the PowerShell script.')
+param scriptUrl string = 'https://raw.githubusercontent.com/Raptus/raptus.AzureBicep/refs/heads/main/az_files_mon_alert_dynamic_nonfree/check-quota-storage.ps1'
+
 // --- Resources ---
 
 // 1. Create Resource Group
@@ -42,6 +45,7 @@ module automation './automation.bicep' = {
     logicAppUrl: logicApp.outputs.logicAppUrl
     thresholdGB: freeSpaceThresholdGB
     scheduleStartTime: scheduleStartTime
+    runbookSourceUrl: scriptUrl
   }
 }
 
