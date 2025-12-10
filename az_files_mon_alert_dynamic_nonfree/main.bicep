@@ -12,7 +12,10 @@ param freeSpaceThresholdGB int = 25
 @description('The email address to receive the alerts.')
 param alertEmailAddress string
 
-@description('Start time for the scheduler. Default is Now + 1 Hour.')
+@description('The Company Name to display in the email subject.')
+param companyName string = subscription().displayName
+
+@description('Start time for the scheduler. Default is Now + 2 Hour.')
 param scheduleStartTime string = dateTimeAdd(utcNow(), 'PT2H')
 
 @description('The raw URL of the PowerShell script.')
@@ -29,7 +32,7 @@ resource rg 'Microsoft.Resources/resourceGroups@2021-04-01' = {
 // 2. Deploy Logic App
 module logicApp './logicApp.bicep' = {
   scope: rg
-  name: 'deployLogicApp'
+  name: 'deploy-storage-monitor_dynamic_nonfree-logicapp'
   params: {
     location: location
     emailRecipient: alertEmailAddress
@@ -39,11 +42,12 @@ module logicApp './logicApp.bicep' = {
 // 3. Deploy Automation Account
 module automation './automation.bicep' = {
   scope: rg
-  name: 'deployAutomation'
+  name: 'deploy-storage-monitor_dynamic_nonfree-automation'
   params: {
     location: location
     logicAppUrl: logicApp.outputs.logicAppUrl
     thresholdGB: freeSpaceThresholdGB
+    companyName: companyName
     scheduleStartTime: scheduleStartTime
     runbookSourceUrl: scriptUrl
   }
@@ -51,7 +55,7 @@ module automation './automation.bicep' = {
 
 // 4. Deploy Role Assignments
 module roleAssignments './roles.bicep' = {
-  name: 'deployRoles'
+  name: 'deploy-storage-monitor_dynamic_nonfree-roles'
   scope: subscription()
   params: {
     principalId: automation.outputs.identityPrincipalId

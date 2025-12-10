@@ -16,7 +16,7 @@ This Bicep Templates deploys an Azure automation account combined with a logic a
 ### 1. Deploy
 
 	az login
-	az deployment sub create --name "deploy-storage-monitor_dynamic_nonfree" --location switzerlandnorth --template-file main.bicep	--parameters alertEmailAddress="<donotreply@domain.tld>" [freeSpaceThresholdGB=50] [scheduleStartTime="2025-12-03T18:00:00+01:00"]
+	az deployment sub create --name "deploy-storage-monitor_dynamic_nonfree" --location switzerlandnorth --template-file main.bicep	--parameters alertEmailAddress="<donotreply@domain.tld>" [freeSpaceThresholdGB=50] [scheduleStartTime="2025-12-03T16:00:00+01:00"] [companyName="Contoso Corp"]
 
 ### 2. Authorize
 
@@ -24,4 +24,8 @@ This Bicep Templates deploys an Azure automation account combined with a logic a
 - Find the API Connection office365-connection (Status: Error)
 - Click Edit API connection -> Authorize -> Sign in -> Save
 
-### 3. Check the ressources for errors, run a test
+### 3. You can change quota and naming setting
+
+- Go to Azure Portal -> Resource Group "RG-RCHKMONALERT"
+- Find the Automation aa-storage-monitor
+- Click on "Shared Resources" -> "Variables"

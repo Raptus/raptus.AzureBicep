@@ -78,4 +78,4 @@ resource workflow 'Microsoft.Logic/workflows@2019-05-01' = {
   }
 }
 
-output logicAppUrl string = listCallbackUrl(workflow.id, '2019-05-01').value
+output logicAppUrl string = listCallbackUrl(resourceId('Microsoft.Logic/workflows/triggers', 'la-storage-alerter', 'manual'), '2016-06-01').value
