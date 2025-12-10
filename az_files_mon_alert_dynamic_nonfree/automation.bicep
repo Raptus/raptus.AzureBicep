@@ -47,7 +47,7 @@ resource runbook 'Microsoft.Automation/automationAccounts/runbooks@2022-08-08' =
   name: 'Check-Storage-Quota'
   location: location
   properties: {
-    runbookType: 'PowerShell'
+    runbookType: 'PowerShell72'
     logVerbose: false
     logProgress: false
     description: 'Checks Azure Files Quota vs Usage'
