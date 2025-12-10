@@ -9,7 +9,8 @@ This Bicep Templates deploys an Azure automation account combined with a logic a
 
 - freeSpaceThresholdGB=<"<integer> - when free space smaller, send an alert"> - **defaults to 25GB if not defined**
 - alertEmailAddress="donotreply@domain.tld" - **set the customer checkcentral email address**
-- scheduleStartTime="2025-12-03T18:00:00+01:00" - set according to you needs - **defaults to 2h in the future**
+- scheduleStartTime="2025-12-03T18:00:00+01:00" - set according to your needs - **defaults to 2h in the future**
+- companyName="Contoso Corp" - set according to your needs - **defaults to tenant().displayName**
 
 ## Deploy
 
@@ -29,3 +30,10 @@ This Bicep Templates deploys an Azure automation account combined with a logic a
 - Go to Azure Portal -> Resource Group "RG-RCHKMONALERT"
 - Find the Automation aa-storage-monitor
 - Click on "Shared Resources" -> "Variables"
+
+### 4. You can change the receiver email afterwards
+
+- Go to Azure Portal -> Resource Group "RG-RCHKMONALERT"
+- Find the Logic App la-storage-alerter
+- Open the Logic app designer and the "Send an email V2" step
+- Edit field "To" to your needs

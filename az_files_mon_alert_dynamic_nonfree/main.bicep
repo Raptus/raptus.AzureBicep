@@ -13,7 +13,7 @@ param freeSpaceThresholdGB int = 25
 param alertEmailAddress string
 
 @description('The Company Name to display in the email subject.')
-param companyName string = subscription().displayName
+param companyName string = tenant().displayName
 
 @description('Start time for the scheduler. Default is Now + 2 Hour.')
 param scheduleStartTime string = dateTimeAdd(utcNow(), 'PT2H')
