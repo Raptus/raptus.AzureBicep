@@ -26,5 +26,11 @@ This Bicep Templates deploys an Azure automation account combined with a logic a
 
 ### 3. Script
 
-- Go to the Automation Account aa-storage-monitor -> Runbooks
-- Click Check-Storage-Quota -> Edit
+The runbook `Check-Storage-Quota` is published automatically during
+deployment from [`check-quota-storage.ps1`](check-quota-storage.ps1) on the
+`main` branch of this public repo (via `publishContentLink` in
+`automation.bicep`). No manual copy-paste step is needed.
+
+> **Important:** if you change `check-quota-storage.ps1`, push the change to
+> `main` **before** redeploying — the deployment always pulls the current
+> `main` version, not the last-deployed one.

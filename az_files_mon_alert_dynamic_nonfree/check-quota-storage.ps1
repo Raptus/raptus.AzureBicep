@@ -12,21 +12,17 @@ $StorageAccounts = Get-AzStorageAccount
 
 ForEach ($Account in $StorageAccounts) {
     Try {
-        # Get Keys to authenticate (Generic method that works for Standard & Premium)
-        $Keys = Get-AzStorageAccountKey -ResourceGroupName $Account.ResourceGroupName -Name $Account.StorageAccountName
-        $Ctx = New-AzStorageContext -StorageAccountName $Account.StorageAccountName -StorageAccountKey $Keys[0].Value
-        
-        # Get All File Shares
-        $Shares = Get-AzStorageShare -Context $Ctx -ErrorAction SilentlyContinue
-        
+        # Get All File Shares via ARM (management plane, no Storage Account Keys needed)
+        $Shares = Get-AzRmStorageShare -ResourceGroupName $Account.ResourceGroupName -StorageAccountName $Account.StorageAccountName -ErrorAction SilentlyContinue
+
         ForEach ($Share in $Shares) {
-            # Get Usage Stats (Works for Standard too)
-            $Stats = Get-AzStorageShareUsage -Context $Ctx -ShareName $Share.Name -ErrorAction SilentlyContinue
-            
+            # -GetShareUsage only works per single share, not on the list call above
+            $ShareUsage = Get-AzRmStorageShare -ResourceGroupName $Account.ResourceGroupName -StorageAccountName $Account.StorageAccountName -Name $Share.Name -GetShareUsage -ErrorAction SilentlyContinue
+
             # Calculate Free Space
-            # Note: Quota is in GB. Usage is in GB (rounded).
-            $UsedGB = $Stats.Usage
-            $QuotaGB = $Share.Quota
+            # Note: Quota is in GiB. Usage is returned in Bytes, converted to GB.
+            $UsedGB = [math]::Round($ShareUsage.ShareUsageBytes / 1GB, 2)
+            $QuotaGB = $Share.QuotaGiB
             $FreeSpace = $QuotaGB - $UsedGB
             
             if ($FreeSpace -lt $ThresholdGB) {

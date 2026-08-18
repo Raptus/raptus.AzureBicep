@@ -40,7 +40,9 @@ resource variableThreshold 'Microsoft.Automation/automationAccounts/variables@20
   }
 }
 
-// 4. Create the Runbook Container (Empty Shell)
+// 4. Create the Runbook, published directly from the public repo's raw script content
+// Loading via publishContentLink at creation time avoids the empty-shell/unpublished-runbook state,
+// so the jobSchedule resource below can link to it in the same deployment.
 resource runbook 'Microsoft.Automation/automationAccounts/runbooks@2022-08-08' = {
   parent: autoAccount
   name: 'Check-Storage-Quota'
@@ -50,6 +52,9 @@ resource runbook 'Microsoft.Automation/automationAccounts/runbooks@2022-08-08' =
     logVerbose: false
     logProgress: false
     description: 'Checks Azure Files Quota vs Usage'
+    publishContentLink: {
+      uri: 'https://raw.githubusercontent.com/Raptus/raptus.AzureBicep/main/az_files_mon_alert_dynamic_nonfree/check-quota-storage.ps1'
+    }
   }
 }
 
