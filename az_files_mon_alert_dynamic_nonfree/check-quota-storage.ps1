@@ -13,13 +13,18 @@ catch {
 
 # --- 2. Configuration ---
 try {
-    $LogicAppUrl = Get-AutomationVariable -Name 'LogicAppWebhookUrl'
+    $AcsEndpoint = Get-AutomationVariable -Name 'AcsEndpoint'
+    $SenderAddress = Get-AutomationVariable -Name 'SenderAddress'
+    $AlertRecipientAddress = Get-AutomationVariable -Name 'AlertRecipientAddress'
     $ThresholdGB = Get-AutomationVariable -Name 'FreeSpaceThresholdGB'
     $CompanyName = Get-AutomationVariable -Name 'CompanyName'
+    $SendTestEmail = Get-AutomationVariable -Name 'SendTestEmail'
 
-    # DEBUG: Check if URL looks valid
-    if ([string]::IsNullOrEmpty($LogicAppUrl)) { throw "LogicAppUrl variable is empty!" }
-    
+    # DEBUG: Check if the ACS endpoint looks valid
+    if ([string]::IsNullOrEmpty($AcsEndpoint)) { throw "AcsEndpoint variable is empty!" }
+    if ([string]::IsNullOrEmpty($SenderAddress)) { throw "SenderAddress variable is empty!" }
+    if ([string]::IsNullOrEmpty($AlertRecipientAddress)) { throw "AlertRecipientAddress variable is empty!" }
+
     Write-Output "CONFIG: Threshold set to $ThresholdGB GB."
     Write-Output "CONFIG: Company Name set to '$CompanyName'."
 }
@@ -126,59 +131,99 @@ ForEach ($Account in $StorageAccounts) {
     }
 }
 
+# --- Test-mode override ---
+if ($SendTestEmail -eq 'true' -and $Results.Count -eq 0) {
+    Write-Output "TEST MODE: SendTestEmail is 'true' and no real alerts were found — injecting a dummy row to exercise the full alert path."
+    $Results += [PSCustomObject]@{
+        Account = 'TEST-ACCOUNT'
+        Share   = 'TEST-SHARE'
+        QuotaGB = 100
+        UsedGB  = 90
+        FreeGB  = 10
+    }
+}
+
 # --- 4. Alerting with Debugging ---
 Write-Output "--------------------------------------------------"
 If ($Results.Count -gt 0) {
     Write-Output "ALERT TRIGGER: Found $($Results.Count) issues. Preparing payload..."
-    
+
     try {
         # Convert to HTML
         $TableHtml = $Results | ConvertTo-Html -Fragment
-        
-        # Construct Payload
-        $Payload = @{
-            Subject = "Storage Account Alert for ${CompanyName}: Low Free Space"
-            Body    = "<h3>Low Storage Space Detected for ${CompanyName}</h3><p>The following shares have less than $ThresholdGB GB free space:</p>$TableHtml"
+        $Subject = "Storage Account Alert for ${CompanyName}: Low Free Space"
+        $HtmlBody = "<h3>Low Storage Space Detected for ${CompanyName}</h3><p>The following shares have less than $ThresholdGB GB free space:</p>$TableHtml"
+
+        # Acquire a Managed Identity access token for Azure Communication
+        # Services. Get-AzAccessToken's .Token property is a plain string
+        # in some Az.Accounts versions and a SecureString in others
+        # (documented breaking-change area) — handle both.
+        Write-Output "ACTION: Requesting Managed Identity token for Azure Communication Services..."
+        $TokenResult = Get-AzAccessToken -ResourceUrl 'https://communication.azure.com'
+        if ($TokenResult.Token -is [System.Security.SecureString]) {
+            $AccessToken = [System.Net.NetworkCredential]::new('', $TokenResult.Token).Password
         }
-        
-        $JsonPayload = $Payload | ConvertTo-Json -Depth 5
-        
+        else {
+            $AccessToken = $TokenResult.Token
+        }
+
+        # Construct Payload (ACS Email "emails:send" request shape)
+        $EmailPayload = @{
+            senderAddress = $SenderAddress
+            content       = @{
+                subject = $Subject
+                html    = $HtmlBody
+            }
+            recipients    = @{
+                to = @(
+                    @{ address = $AlertRecipientAddress }
+                )
+            }
+        }
+
+        $JsonPayload = $EmailPayload | ConvertTo-Json -Depth 6
+
         # DEBUG: Print size of payload
         Write-Output "DEBUG: Payload size is $([System.Text.Encoding]::UTF8.GetByteCount($JsonPayload)) bytes."
 
-        # Action: Sending POST to Logic App
-        Write-Output "ACTION: Sending POST to Logic App..."
-        
+        # Action: Sending POST to Azure Communication Services
+        Write-Output "ACTION: Sending email via Azure Communication Services..."
+
         # Using the Robust -SkipHttpErrorCheck method
-        $Response = Invoke-RestMethod -Uri $LogicAppUrl `
+        # ACS Email "Send" REST API — api-version 2025-09-01 confirmed as the
+        # current stable data-plane version via Microsoft's official REST
+        # reference (https://learn.microsoft.com/en-us/rest/api/communication/email/email/send?view=rest-communication-email-2025-09-01,
+        # checked 2026-09-15). This is the Email data-plane API version, not
+        # the ARM control-plane api-version used in acsEmail.bicep/
+        # acsRoleAssignment.bicep — the identical value is coincidental, not a
+        # copy-paste error (verified independently, not assumed).
+        $Response = Invoke-RestMethod -Uri "$AcsEndpoint/emails:send?api-version=2025-09-01" `
             -Method Post `
+            -Headers @{ Authorization = "Bearer $AccessToken" } `
             -Body $JsonPayload `
             -ContentType "application/json" `
             -SkipHttpErrorCheck `
             -StatusCodeVariable "HttpStatusCode"
-        
+
         # CHECK THE STATUS CODE MANUALLY
         if ($HttpStatusCode -ge 400) {
-            # This block runs if the Logic App returns an error (e.g., 400, 401, 500)
-            Write-Error "CRITICAL: Logic App returned error code $HttpStatusCode"
-            
+            # This block runs if ACS returns an error (e.g., 400, 401, 500)
+            Write-Error "CRITICAL: ACS Email API returned error code $HttpStatusCode"
+
             Write-Output "--- ERROR RESPONSE CONTENT ---"
-            # Here is the variable you wanted to see!
-            $Response | ConvertTo-Json -Depth 5 
+            $Response | ConvertTo-Json -Depth 5
             Write-Output "------------------------------"
         }
         else {
-            # This block runs if the request was successful (e.g., 200, 201, 202)
-            Write-Output "SUCCESS: Logic App accepted request (Status: $HttpStatusCode)."
-            # Optional: Print response if needed
-            # $Response
+            # 202 Accepted is success: ACS queues the email asynchronously.
+            Write-Output "SUCCESS: ACS accepted the email request (Status: $HttpStatusCode)."
         }
     }
     catch {
-        # Because we used -SkipHttpErrorCheck, this block ONLY catches 
+        # Because we used -SkipHttpErrorCheck, this block ONLY catches
         # distinct connectivity failures (DNS failed, Internet down, Timeout),
         # NOT server error responses.
-        Write-Error "CRITICAL: Network/Connectivity Trigger FAILED."
+        Write-Error "CRITICAL: Network/Connectivity to Azure Communication Services FAILED."
         Write-Output "  |-- Exception: $($_.Exception.Message)"
     }
 } else {

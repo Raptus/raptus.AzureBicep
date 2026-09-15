@@ -1,11 +1,12 @@
 param location string
 
-@secure()
-param logicAppUrl string
-
 param thresholdGB int
 param runbookSourceUrl string
 param companyName string
+param acsEndpoint string
+param senderAddress string
+param alertRecipientAddress string
+param sendTestEmail string = 'false'
 
 // Default: Current UTC time + 1 Hour (To ensure it is in the future)
 // If you want exact 16:00 alignment, override this parameter.
@@ -30,6 +31,26 @@ module automationAccountModule 'br/public:avm/res/automation/automation-account:
       {
         name: 'CompanyName'
         value: '"${companyName}"'
+        isEncrypted: false
+      }
+      {
+        name: 'AcsEndpoint'
+        value: '"${acsEndpoint}"'
+        isEncrypted: false
+      }
+      {
+        name: 'SenderAddress'
+        value: '"${senderAddress}"'
+        isEncrypted: false
+      }
+      {
+        name: 'AlertRecipientAddress'
+        value: '"${alertRecipientAddress}"'
+        isEncrypted: false
+      }
+      {
+        name: 'SendTestEmail'
+        value: '"${sendTestEmail}"'
         isEncrypted: false
       }
     ]
@@ -57,30 +78,12 @@ module automationAccountModule 'br/public:avm/res/automation/automation-account:
 // AVM 0.19.2's jobSchedules array defaults the resource's own name to
 // newGuid() internally (verified against the compiled ARM template) and
 // never lets a caller override it — that reproduces the exact
-// non-deterministic-naming bug this migration exists to fix. Declared by
-// hand instead, with a deterministic name, against an 'existing' lookup
-// of the AVM-created account.
+// non-deterministic-naming bug the AVM migration existed to fix.
+// Declared by hand instead, with a deterministic name, against an
+// 'existing' lookup of the AVM-created account. (Unchanged from the AVM
+// migration fix wave — unrelated to this ACS migration.)
 resource autoAccount 'Microsoft.Automation/automationAccounts@2022-08-08' existing = {
   name: 'aa-storage-monitor'
-  dependsOn: [
-    automationAccountModule
-  ]
-}
-
-// Also declared by hand rather than via the module's variables array:
-// that array is an untyped, non-secure module parameter, so a secret
-// value passed through it (this webhook URL's callback signature) is
-// recorded in plaintext in this deployment's ARM history one level up —
-// even though logicAppUrl itself is @secure() in this file. Declaring it
-// directly here keeps the value inside this file's own secure parameter
-// scope instead of crossing into a non-secure module boundary.
-resource variableLogicApp 'Microsoft.Automation/automationAccounts/variables@2022-08-08' = {
-  parent: autoAccount
-  name: 'LogicAppWebhookUrl'
-  properties: {
-    value: '"${logicAppUrl}"'
-    isEncrypted: true
-  }
   dependsOn: [
     automationAccountModule
   ]
