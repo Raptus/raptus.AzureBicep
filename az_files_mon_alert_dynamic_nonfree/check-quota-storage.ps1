@@ -80,36 +80,48 @@ ForEach ($Account in $StorageAccounts) {
                     continue
                 }
 
-                # --- 2. Get Usage from Metrics ---
-                $MetricResourceID = "$($Account.Id)/fileServices/default"
-                
-                # We check the last 2 hours to ensure we find at least one data point
-                $MetricData = Get-AzMetric -ResourceId $MetricResourceID `
-                    -MetricName "FileCapacity" `
-                    -MetricFilter "FileShare eq '$($Share.Name)'" `
-                    -AggregationType Average `
-                    -TimeGrain 01:00:00 `
-                    -StartTime (Get-Date).AddHours(-2) `
-                    -EndTime (Get-Date) `
-                    -ErrorAction Stop
-
-                $LatestMetric = $MetricData.Data | Sort-Object TimeStamp -Descending | Select-Object -First 1
-                
-                if ($null -eq $LatestMetric -or $null -eq $LatestMetric.Average) {
-                    $UsedGB = 0
-                    Write-Output "  > [INFO] No usage data for '$($Share.Name)'. Assuming 0 GB used."
-                } else {
-                    $UsedBytes = $LatestMetric.Average
-                    $UsedGB = [math]::Round($UsedBytes / 1GB, 2)
+                # --- 2. Get Usage via direct ARM REST call ---
+                # Get-AzRmStorageShare's -GetShareUsage switch is version-
+                # dependent: confirmed working against Az.Storage 9.7.0
+                # locally, but returned $null ShareUsageBytes for every
+                # share against this Automation Account's Az.Storage 6.1.0
+                # (2026-09-15) with no error raised. Invoke-AzRestMethod
+                # (Az.Accounts, stable across the module versions in use
+                # here) calls the same ARM "shares?$expand=stats" endpoint
+                # directly instead, verified manually to return
+                # shareUsageBytes correctly for this account.
+                $StatsPath = "$($Account.Id)/fileServices/default/shares/$($Share.Name)?`$expand=stats&api-version=2023-01-01"
+                $StatsResponse = Invoke-AzRestMethod -Method GET -Path $StatsPath -ErrorAction Stop
+                $UsageBytes = $null
+                if ($StatsResponse.StatusCode -lt 400) {
+                    $UsageBytes = ($StatsResponse.Content | ConvertFrom-Json).properties.shareUsageBytes
                 }
 
-                # --- 3. Calculation ---
-                $FreeSpace = $QuotaGB - $UsedGB
-                
+                if ($null -eq $UsageBytes) {
+                    # No silent "assume 0 GB used" fallback: that read as
+                    # a false "healthy" result on a share that may
+                    # actually be nearly full. Surface it as unknown
+                    # instead, both in the log and in the overview table,
+                    # and skip it from threshold-based alerting rather
+                    # than guess in either direction.
+                    $UsedGB = $null
+                    $FreeSpace = $null
+                    Write-Warning "    [WARN] No usage data for '$($Share.Name)' (HTTP $($StatsResponse.StatusCode)). Reporting as unknown, not assuming 0 GB used."
+                } else {
+                    $UsedGB = [math]::Round($UsageBytes / 1GB, 2)
+                    $FreeSpace = [math]::Round($QuotaGB - $UsedGB, 2)
+                }
+
+                # --- 3. Reporting ---
                 Write-Output "  > SHARE: $($Share.Name)"
                 Write-Output "    |-- Quota: $QuotaGB GB"
-                Write-Output "    |-- Used : $UsedGB GB"
-                Write-Output "    |-- Free : $FreeSpace GB"
+                if ($null -eq $UsedGB) {
+                    Write-Output "    |-- Used : UNKNOWN (no metric data)"
+                    Write-Output "    |-- Free : UNKNOWN"
+                } else {
+                    Write-Output "    |-- Used : $UsedGB GB"
+                    Write-Output "    |-- Free : $FreeSpace GB"
+                }
 
                 # Every measured share (i.e. not skipped for being too
                 # small) goes into the overview table sent with every
@@ -119,11 +131,11 @@ ForEach ($Account in $StorageAccounts) {
                     Account = $Account.StorageAccountName
                     Share   = $Share.Name
                     QuotaGB = $QuotaGB
-                    UsedGB  = $UsedGB
-                    FreeGB  = $FreeSpace
+                    UsedGB  = if ($null -eq $UsedGB) { 'N/A' } else { $UsedGB }
+                    FreeGB  = if ($null -eq $FreeSpace) { 'N/A' } else { $FreeSpace }
                 }
 
-                if ($FreeSpace -lt $ThresholdGB) {
+                if ($null -ne $FreeSpace -and $FreeSpace -lt $ThresholdGB) {
                     Write-Output "    [!] ALERT: LOW SPACE DETECTED!"
                     $Results += [PSCustomObject]@{
                         Account = $Account.StorageAccountName
