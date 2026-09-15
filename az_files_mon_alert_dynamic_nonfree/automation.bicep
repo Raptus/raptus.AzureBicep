@@ -1,5 +1,8 @@
 param location string
+
+@secure()
 param logicAppUrl string
+
 param thresholdGB int
 param runbookSourceUrl string
 param companyName string
@@ -8,24 +11,69 @@ param companyName string
 // If you want exact 16:00 alignment, override this parameter.
 param scheduleStartTime string = dateTimeAdd(utcNow(), 'PT2H')
 
-// This helps creating a unique deployment GUID every time the deployment runs
-param deploymentTimestamp string = utcNow()
-
-// Create Automation Account
-resource autoAccount 'Microsoft.Automation/automationAccounts@2022-08-08' = {
-  name: 'aa-storage-monitor'
-  location: location
-  identity: {
-    type: 'SystemAssigned'
-  }
-  properties: {
-    sku: {
-      name: 'Basic'
+module automationAccountModule 'br/public:avm/res/automation/automation-account:0.19.2' = {
+  name: 'storage-monitor-automation-account'
+  params: {
+    name: 'aa-storage-monitor'
+    location: location
+    skuName: 'Basic'
+    disableLocalAuth: false
+    managedIdentities: {
+      systemAssigned: true
     }
+    variables: [
+      {
+        name: 'FreeSpaceThresholdGB'
+        value: '${thresholdGB}'
+        isEncrypted: false
+      }
+      {
+        name: 'CompanyName'
+        value: '"${companyName}"'
+        isEncrypted: false
+      }
+    ]
+    runbooks: [
+      {
+        name: 'Check-Storage-Quota'
+        type: 'PowerShell72'
+        description: 'Checks Azure Files Quota vs Usage'
+        uri: runbookSourceUrl
+        version: '1.0.0.0'
+      }
+    ]
+    schedules: [
+      {
+        name: 'az-file-alert-mon-run-every-8h'
+        frequency: 'Hour'
+        interval: 8
+        startTime: scheduleStartTime
+        timeZone: 'W. Europe Standard Time'
+      }
+    ]
   }
 }
 
-// Variable: Store the Logic App Webhook URL
+// AVM 0.19.2's jobSchedules array defaults the resource's own name to
+// newGuid() internally (verified against the compiled ARM template) and
+// never lets a caller override it — that reproduces the exact
+// non-deterministic-naming bug this migration exists to fix. Declared by
+// hand instead, with a deterministic name, against an 'existing' lookup
+// of the AVM-created account.
+resource autoAccount 'Microsoft.Automation/automationAccounts@2022-08-08' existing = {
+  name: 'aa-storage-monitor'
+  dependsOn: [
+    automationAccountModule
+  ]
+}
+
+// Also declared by hand rather than via the module's variables array:
+// that array is an untyped, non-secure module parameter, so a secret
+// value passed through it (this webhook URL's callback signature) is
+// recorded in plaintext in this deployment's ARM history one level up —
+// even though logicAppUrl itself is @secure() in this file. Declaring it
+// directly here keeps the value inside this file's own secure parameter
+// scope instead of crossing into a non-secure module boundary.
 resource variableLogicApp 'Microsoft.Automation/automationAccounts/variables@2022-08-08' = {
   parent: autoAccount
   name: 'LogicAppWebhookUrl'
@@ -33,73 +81,31 @@ resource variableLogicApp 'Microsoft.Automation/automationAccounts/variables@202
     value: '"${logicAppUrl}"'
     isEncrypted: true
   }
+  dependsOn: [
+    automationAccountModule
+  ]
 }
 
-// Variable: Store the Threshold
-resource variableThreshold 'Microsoft.Automation/automationAccounts/variables@2022-08-08' = {
-  parent: autoAccount
-  name: 'FreeSpaceThresholdGB'
-  properties: {
-    value: '${thresholdGB}'
-    isEncrypted: false
-  }
-}
-
-// Variable: Company Name
-resource variableCompany 'Microsoft.Automation/automationAccounts/variables@2022-08-08' = {
-  parent: autoAccount
-  name: 'CompanyName'
-  properties: {
-    value: '"${companyName}"'
-    isEncrypted: false
-  }
-}
-
-// Create the Runbook Container (Empty Shell)
-resource runbook 'Microsoft.Automation/automationAccounts/runbooks@2022-08-08' = {
-  parent: autoAccount
-  name: 'Check-Storage-Quota'
-  location: location
-  properties: {
-    runbookType: 'PowerShell72'
-    logVerbose: false
-    logProgress: false
-    description: 'Checks Azure Files Quota vs Usage'
-    // This automates the publishing
-    publishContentLink: {
-      uri: runbookSourceUrl
-      version: '1.0.0.0'
-    }
-  }
-}
-
-// Create the Schedule (Every 8h, starting 16:00 Swiss Time)
-resource schedule 'Microsoft.Automation/automationAccounts/schedules@2022-08-08' = {
-  parent: autoAccount
-  name: 'az-file-alert-mon-run-every-8h'
-  properties: {
-    frequency: 'Hour'
-    interval: 8
-    // Start in the past
-    startTime: scheduleStartTime
-    timeZone: 'W. Europe Standard Time' 
-  }
-}
-
-// Link Runbook to Schedule
 resource jobSchedule 'Microsoft.Automation/automationAccounts/jobSchedules@2022-08-08' = {
   parent: autoAccount
-  name: guid(autoAccount.id, 'az-file-alert-mon-run-every-8h', 'Check-Storage-Quota', deploymentTimestamp)
+  name: guid(autoAccount.id, 'Check-Storage-Quota', 'az-file-alert-mon-run-every-8h')
   properties: {
     runbook: {
-      name: runbook.name
+      name: 'Check-Storage-Quota'
     }
     schedule: {
-      name: schedule.name
+      name: 'az-file-alert-mon-run-every-8h'
     }
-    parameters: {} 
+    parameters: {}
   }
+  dependsOn: [
+    automationAccountModule
+  ]
 }
 
 // Export the Identity ID for Role Assignments
-output identityPrincipalId string = autoAccount.identity.principalId
+// Non-null assertion (!): the module's output is typed nullable (string?)
+// to cover the general case where system-assigned identity isn't
+// configured — we know it's always populated here since we pass
+// managedIdentities: { systemAssigned: true } above.
+output identityPrincipalId string = automationAccountModule.outputs.systemAssignedMIPrincipalId!
