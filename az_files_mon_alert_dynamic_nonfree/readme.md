@@ -12,14 +12,27 @@ Storage accounts. Email sending is fully automated — no Microsoft
 365/Exchange Online mailbox and no manual post-deployment authorization
 step are required.
 
+The runbook runs **once daily at 05:00** (Europe/Zurich) and sends an
+email on **every run**, not only when a problem is found — a "Storage
+Account Check OK" heartbeat email on healthy runs, an alert email
+otherwise. This is intentional: it lets external dead-man's-switch
+monitoring (e.g. Checkcentral) watch this mailbox for a missing daily
+email, rather than only reacting to an alert that may never come if the
+runbook itself silently stops running.
+
 ## Params
 
 - `freeSpaceThresholdGB` = `<integer>` — alert when free space drops
   below this value. **Defaults to 25GB if not defined.**
 - `alertEmailAddress` = `"you@example.com"` — the alert recipient
   address.
-- `scheduleStartTime` = `"2025-12-03T18:00:00+01:00"` — schedule start.
-  **Defaults to now + 2h.**
+- `scheduleStartTime` = `"2025-12-03T05:00:00+01:00"` — first run
+  timestamp; recurrence is daily from there. **Defaults to tomorrow at
+  03:00 UTC**, which is 05:00 local time only while CEST/DST is active
+  (UTC+2). Bicep cannot do timezone-aware date math, so during CET
+  (winter, UTC+1) this default lands at 04:00 local — override
+  explicitly (`...T04:00:00Z`) if exact 05:00 alignment matters, or just
+  redeploy once after the next DST changeover.
 - `companyName` = `"Contoso Corp"` — shown in the email subject.
   **Defaults to `tenant().displayName`.**
 - `dataLocation` = `"Europe"` — ACS data residency for a newly created

@@ -143,89 +143,95 @@ if ($SendTestEmail -eq 'true' -and $Results.Count -eq 0) {
     }
 }
 
-# --- 4. Alerting with Debugging ---
+# --- 4. Build Email Content ---
+# An email is sent on every run, whether or not issues were found. This
+# is intentional (not a bug from the earlier "alert-only" design):
+# Checkcentral is used as an external dead-man's-switch watchdog on this
+# mailbox, so a "healthy" run needs its own heartbeat email, not silence.
 Write-Output "--------------------------------------------------"
 If ($Results.Count -gt 0) {
-    Write-Output "ALERT TRIGGER: Found $($Results.Count) issues. Preparing payload..."
+    Write-Output "ALERT: Found $($Results.Count) issues. Preparing alert payload..."
+    $TableHtml = $Results | ConvertTo-Html -Fragment
+    $Subject = "Storage Account Alert for ${CompanyName}: Low Free Space"
+    $HtmlBody = "<h3>Low Storage Space Detected for ${CompanyName}</h3><p>The following shares have less than $ThresholdGB GB free space:</p>$TableHtml"
+}
+Else {
+    Write-Output "HEALTHY: No shares below threshold. Sending status-OK heartbeat email."
+    $Subject = "Storage Account Check OK for ${CompanyName}"
+    $HtmlBody = "<h3>Storage Check Completed for ${CompanyName}</h3><p>No shares are below the $ThresholdGB GB free space threshold. This message confirms the scheduled check ran successfully.</p>"
+}
 
-    try {
-        # Convert to HTML
-        $TableHtml = $Results | ConvertTo-Html -Fragment
-        $Subject = "Storage Account Alert for ${CompanyName}: Low Free Space"
-        $HtmlBody = "<h3>Low Storage Space Detected for ${CompanyName}</h3><p>The following shares have less than $ThresholdGB GB free space:</p>$TableHtml"
+# --- 5. Send Email via Azure Communication Services ---
+try {
+    # Acquire a Managed Identity access token for Azure Communication
+    # Services. Get-AzAccessToken's .Token property is a plain string
+    # in some Az.Accounts versions and a SecureString in others
+    # (documented breaking-change area) — handle both.
+    Write-Output "ACTION: Requesting Managed Identity token for Azure Communication Services..."
+    $TokenResult = Get-AzAccessToken -ResourceUrl 'https://communication.azure.com'
+    if ($TokenResult.Token -is [System.Security.SecureString]) {
+        $AccessToken = [System.Net.NetworkCredential]::new('', $TokenResult.Token).Password
+    }
+    else {
+        $AccessToken = $TokenResult.Token
+    }
 
-        # Acquire a Managed Identity access token for Azure Communication
-        # Services. Get-AzAccessToken's .Token property is a plain string
-        # in some Az.Accounts versions and a SecureString in others
-        # (documented breaking-change area) — handle both.
-        Write-Output "ACTION: Requesting Managed Identity token for Azure Communication Services..."
-        $TokenResult = Get-AzAccessToken -ResourceUrl 'https://communication.azure.com'
-        if ($TokenResult.Token -is [System.Security.SecureString]) {
-            $AccessToken = [System.Net.NetworkCredential]::new('', $TokenResult.Token).Password
+    # Construct Payload (ACS Email "emails:send" request shape)
+    $EmailPayload = @{
+        senderAddress = $SenderAddress
+        content       = @{
+            subject = $Subject
+            html    = $HtmlBody
         }
-        else {
-            $AccessToken = $TokenResult.Token
-        }
-
-        # Construct Payload (ACS Email "emails:send" request shape)
-        $EmailPayload = @{
-            senderAddress = $SenderAddress
-            content       = @{
-                subject = $Subject
-                html    = $HtmlBody
-            }
-            recipients    = @{
-                to = @(
-                    @{ address = $AlertRecipientAddress }
-                )
-            }
-        }
-
-        $JsonPayload = $EmailPayload | ConvertTo-Json -Depth 6
-
-        # DEBUG: Print size of payload
-        Write-Output "DEBUG: Payload size is $([System.Text.Encoding]::UTF8.GetByteCount($JsonPayload)) bytes."
-
-        # Action: Sending POST to Azure Communication Services
-        Write-Output "ACTION: Sending email via Azure Communication Services..."
-
-        # Using the Robust -SkipHttpErrorCheck method
-        # ACS Email "Send" REST API — api-version 2025-09-01 confirmed as the
-        # current stable data-plane version via Microsoft's official REST
-        # reference (https://learn.microsoft.com/en-us/rest/api/communication/email/email/send?view=rest-communication-email-2025-09-01,
-        # checked 2026-09-15). This is the Email data-plane API version, not
-        # the ARM control-plane api-version used in acsEmail.bicep/
-        # acsRoleAssignment.bicep — the identical value is coincidental, not a
-        # copy-paste error (verified independently, not assumed).
-        $Response = Invoke-RestMethod -Uri "$AcsEndpoint/emails:send?api-version=2025-09-01" `
-            -Method Post `
-            -Headers @{ Authorization = "Bearer $AccessToken" } `
-            -Body $JsonPayload `
-            -ContentType "application/json" `
-            -SkipHttpErrorCheck `
-            -StatusCodeVariable "HttpStatusCode"
-
-        # CHECK THE STATUS CODE MANUALLY
-        if ($HttpStatusCode -ge 400) {
-            # This block runs if ACS returns an error (e.g., 400, 401, 500)
-            Write-Error "CRITICAL: ACS Email API returned error code $HttpStatusCode"
-
-            Write-Output "--- ERROR RESPONSE CONTENT ---"
-            $Response | ConvertTo-Json -Depth 5
-            Write-Output "------------------------------"
-        }
-        else {
-            # 202 Accepted is success: ACS queues the email asynchronously.
-            Write-Output "SUCCESS: ACS accepted the email request (Status: $HttpStatusCode)."
+        recipients    = @{
+            to = @(
+                @{ address = $AlertRecipientAddress }
+            )
         }
     }
-    catch {
-        # Because we used -SkipHttpErrorCheck, this block ONLY catches
-        # distinct connectivity failures (DNS failed, Internet down, Timeout),
-        # NOT server error responses.
-        Write-Error "CRITICAL: Network/Connectivity to Azure Communication Services FAILED."
-        Write-Output "  |-- Exception: $($_.Exception.Message)"
+
+    $JsonPayload = $EmailPayload | ConvertTo-Json -Depth 6
+
+    # DEBUG: Print size of payload
+    Write-Output "DEBUG: Payload size is $([System.Text.Encoding]::UTF8.GetByteCount($JsonPayload)) bytes."
+
+    # Action: Sending POST to Azure Communication Services
+    Write-Output "ACTION: Sending email via Azure Communication Services..."
+
+    # Using the Robust -SkipHttpErrorCheck method
+    # ACS Email "Send" REST API — api-version 2025-09-01 confirmed as the
+    # current stable data-plane version via Microsoft's official REST
+    # reference (https://learn.microsoft.com/en-us/rest/api/communication/email/email/send?view=rest-communication-email-2025-09-01,
+    # checked 2026-09-15). This is the Email data-plane API version, not
+    # the ARM control-plane api-version used in acsEmail.bicep/
+    # acsRoleAssignment.bicep — the identical value is coincidental, not a
+    # copy-paste error (verified independently, not assumed).
+    $Response = Invoke-RestMethod -Uri "$AcsEndpoint/emails:send?api-version=2025-09-01" `
+        -Method Post `
+        -Headers @{ Authorization = "Bearer $AccessToken" } `
+        -Body $JsonPayload `
+        -ContentType "application/json" `
+        -SkipHttpErrorCheck `
+        -StatusCodeVariable "HttpStatusCode"
+
+    # CHECK THE STATUS CODE MANUALLY
+    if ($HttpStatusCode -ge 400) {
+        # This block runs if ACS returns an error (e.g., 400, 401, 500)
+        Write-Error "CRITICAL: ACS Email API returned error code $HttpStatusCode"
+
+        Write-Output "--- ERROR RESPONSE CONTENT ---"
+        $Response | ConvertTo-Json -Depth 5
+        Write-Output "------------------------------"
     }
-} else {
-    Write-Output "HEALTHY: No shares below threshold. No alert sent."
+    else {
+        # 202 Accepted is success: ACS queues the email asynchronously.
+        Write-Output "SUCCESS: ACS accepted the email request (Status: $HttpStatusCode)."
+    }
+}
+catch {
+    # Because we used -SkipHttpErrorCheck, this block ONLY catches
+    # distinct connectivity failures (DNS failed, Internet down, Timeout),
+    # NOT server error responses.
+    Write-Error "CRITICAL: Network/Connectivity to Azure Communication Services FAILED."
+    Write-Output "  |-- Exception: $($_.Exception.Message)"
 }
