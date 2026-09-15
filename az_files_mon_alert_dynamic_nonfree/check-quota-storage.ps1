@@ -34,6 +34,7 @@ catch {
 }
 
 $Results = @()
+$AllScanned = @()
 
 # --- 3. Scan Accounts ---
 $StorageAccounts = Get-AzStorageAccount
@@ -110,6 +111,18 @@ ForEach ($Account in $StorageAccounts) {
                 Write-Output "    |-- Used : $UsedGB GB"
                 Write-Output "    |-- Free : $FreeSpace GB"
 
+                # Every measured share (i.e. not skipped for being too
+                # small) goes into the overview table sent with every
+                # email, so anomalies can be spotted by eye before they
+                # cross the alert threshold.
+                $AllScanned += [PSCustomObject]@{
+                    Account = $Account.StorageAccountName
+                    Share   = $Share.Name
+                    QuotaGB = $QuotaGB
+                    UsedGB  = $UsedGB
+                    FreeGB  = $FreeSpace
+                }
+
                 if ($FreeSpace -lt $ThresholdGB) {
                     Write-Output "    [!] ALERT: LOW SPACE DETECTED!"
                     $Results += [PSCustomObject]@{
@@ -134,13 +147,15 @@ ForEach ($Account in $StorageAccounts) {
 # --- Test-mode override ---
 if ($SendTestEmail -eq 'true' -and $Results.Count -eq 0) {
     Write-Output "TEST MODE: SendTestEmail is 'true' and no real alerts were found — injecting a dummy row to exercise the full alert path."
-    $Results += [PSCustomObject]@{
+    $DummyRow = [PSCustomObject]@{
         Account = 'TEST-ACCOUNT'
         Share   = 'TEST-SHARE'
         QuotaGB = 100
         UsedGB  = 90
         FreeGB  = 10
     }
+    $Results += $DummyRow
+    $AllScanned += $DummyRow
 }
 
 # --- 4. Build Email Content ---
@@ -148,17 +163,20 @@ if ($SendTestEmail -eq 'true' -and $Results.Count -eq 0) {
 # is intentional (not a bug from the earlier "alert-only" design):
 # Checkcentral is used as an external dead-man's-switch watchdog on this
 # mailbox, so a "healthy" run needs its own heartbeat email, not silence.
+# Every email also carries the full overview table of every measured
+# share (not just the ones over threshold), so anomalies can be caught
+# by eye during a manual review without waiting for an alert to fire.
 Write-Output "--------------------------------------------------"
+$TableHtml = $AllScanned | ConvertTo-Html -Fragment
 If ($Results.Count -gt 0) {
     Write-Output "ALERT: Found $($Results.Count) issues. Preparing alert payload..."
-    $TableHtml = $Results | ConvertTo-Html -Fragment
     $Subject = "Storage Account Alert for ${CompanyName}: Low Free Space"
-    $HtmlBody = "<h3>Low Storage Space Detected for ${CompanyName}</h3><p>The following shares have less than $ThresholdGB GB free space:</p>$TableHtml"
+    $HtmlBody = "<h3>Low Storage Space Detected for ${CompanyName}</h3><p>The following shares have less than $ThresholdGB GB free space:</p><p>Overview of all monitored shares:</p>$TableHtml"
 }
 Else {
     Write-Output "HEALTHY: No shares below threshold. Sending status-OK heartbeat email."
     $Subject = "Storage Account Check OK for ${CompanyName}"
-    $HtmlBody = "<h3>Storage Check Completed for ${CompanyName}</h3><p>No shares are below the $ThresholdGB GB free space threshold. This message confirms the scheduled check ran successfully.</p>"
+    $HtmlBody = "<h3>Storage Check Completed for ${CompanyName}</h3><p>No shares are below the $ThresholdGB GB free space threshold. This message confirms the scheduled check ran successfully.</p><p>Overview of all monitored shares:</p>$TableHtml"
 }
 
 # --- 5. Send Email via Azure Communication Services ---
