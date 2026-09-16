@@ -15,8 +15,20 @@ param alertEmailAddress string
 @description('The Company Name to display in the email subject.')
 param companyName string = tenant().displayName
 
-@description('Start time for the scheduler. Default is Now + 2 Hour.')
-param scheduleStartTime string = dateTimeAdd(utcNow(), 'PT2H')
+// Default: tomorrow's date at 03:00 UTC, which is 05:00 local time in
+// Switzerland (W. Europe Standard Time) ONLY while CEST/DST is active
+// (UTC+2, roughly late March-late October). Bicep has no timezone-aware
+// date arithmetic, so this default drifts by 1h outside DST (would land
+// at 04:00 local instead of 05:00) — override explicitly with
+// scheduleStartTime="...T04:00:00Z" during CET (winter) if exact 05:00
+// alignment matters, or redeploy once after the next DST changeover.
+// NOTE: this MUST stay identical to automation.bicep's own
+// scheduleStartTime default — main.bicep always passes an explicit
+// value into that module, so automation.bicep's default is otherwise
+// silently unreachable (confirmed live 2026-09-16: an out-of-sync
+// default here caused the Thymos AG schedule to start at deployment
+// time + 2h instead of the intended daily 05:00).
+param scheduleStartTime string = '${take(dateTimeAdd(utcNow(), 'P1D'), 10)}T03:00:00Z'
 
 @description('The raw URL of the PowerShell script.')
 param scriptUrl string = 'https://raw.githubusercontent.com/Raptus/raptus.AzureBicep/refs/heads/main/az_files_mon_alert_dynamic_nonfree/check-quota-storage.ps1'
